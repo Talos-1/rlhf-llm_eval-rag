@@ -4,10 +4,11 @@ import torch
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 
-# 1. 12GB VRAM Configuration
-max_seq_length = 512 # Keep this strict to prevent DPO OOM crashes later
+# 1. 24GB VRAM Configuration
+max_seq_length = 4096
+
 # Using Unsloth's pre-quantized 4-bit model saves massive download and load times
-model_name = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit" 
+model_name = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
 
 print(f"Loading {model_name}...")
 model, tokenizer = FastLanguageModel.from_pretrained(
@@ -15,14 +16,15 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     max_seq_length=max_seq_length,
     load_in_4bit=True,
     fast_inference=True,
+    dtype=torch.bfloat16
 )
 
 # 2. Inject LoRA Adapters
 model = FastLanguageModel.get_peft_model(
     model,
-    r=16,
+    r=32,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_alpha=16,
+    lora_alpha=32,
     use_gradient_checkpointing="unsloth",
     random_state=3407,
 )
@@ -34,13 +36,13 @@ dataset = load_dataset("Vanessasml/cybersecurity_32k_instruction_input_output", 
 def format_sft(example):
     # This dataset uses strictly lowercase keys!
     prompt = example['instruction']
-    
+
     # Add the input context if it exists and isn't empty
     if example.get('input') and str(example['input']).strip():
         prompt += f"\nContext: {example['input']}"
-        
+
     return {"text": f"Instruction: {prompt}\n\nResponse: {example['output']}"}
-    
+ 
 dataset = dataset.map(format_sft)
 
 # 4. Create the Train/Test Split (90% Train, 10% Eval)
@@ -60,20 +62,20 @@ trainer = SFTTrainer(
     max_seq_length=max_seq_length,
     args=SFTConfig(
         output_dir="Step-1-Llama3.2-SFT",
-        per_device_train_batch_size=2, # Safe for 12GB VRAM
+        per_device_train_batch_size=8, # Safe for 24GB VRAM
         gradient_accumulation_steps=4,
         num_train_epochs=2, # 2 epochs is usually enough for a 3B model
         learning_rate=2e-4,
         optim="paged_adamw_8bit",
         logging_steps=100,
-        eval_strategy="epoch", 
+        eval_strategy="epoch",
     ),
 )
 
 # 6. Train and Save
-print("Starting Production SFT Training... Monitor your VRAM via nvidia-smi!")
+print("Starting SFT Training")
 trainer.train()
 
 # Save in 16-bit to preserve the mathematical precision for Phase 2 (DPO)
 model.save_pretrained_merged("Llama-3.2-SFT-Merged", tokenizer, save_method="merged_16bit")
-print("Phase 1 Complete! You now have a custom cybersecurity LLM.")
+print("SFT Training Complete")
