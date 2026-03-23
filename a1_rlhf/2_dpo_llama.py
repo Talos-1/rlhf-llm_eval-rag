@@ -1,3 +1,8 @@
+'''
+This file is responsible for applying Direct Preference Optimisation to the SFT model. This is trained on the Orca DPO Pairs dataset
+due to lack of any chosen/rejected dataset pairs related to cybersecurity. The hope is that the model learns to preference the response
+style rather than the content in the dataset.
+'''
 from unsloth import FastLanguageModel
 import os
 
@@ -5,37 +10,37 @@ import torch
 from datasets import load_dataset
 from trl import DPOTrainer, DPOConfig
 
-# 2. Configuration (Point to the new 3B SFT model)
+#Set path for SFT model
 local_dir = "Llama-3.2-SFT-Merged"
 sft_model_path = os.path.abspath(local_dir)
 
 if not os.path.exists(sft_model_path):
     raise FileNotFoundError(f"\nERROR: Could not find SFT model at {sft_model_path}")
 
-# Bumped from 512. 1024 is the safe sweet spot for DPO on 24GB VRAM
+#Set max sequence length to be the same as the SFT model.
 max_seq_length = 4096
 
-# 3. Load the SFT Model
+#Load SFT model with same configuration as it was trained on.
 print(f"Loading Phase 1 SFT Model from {sft_model_path}...")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=sft_model_path,
     max_seq_length=max_seq_length,
     load_in_4bit=True,
     fast_inference=True,
-    dtype=torch.bfloat16, # Force Blackwell optimization
+    dtype=torch.bfloat16,
 )
 
-# 4. Inject LoRA Adapters
+#Set LoRA adapter. The rank was determined during SFT training. Any larger and an OOM error occurs.
 model = FastLanguageModel.get_peft_model(
     model,
-    r=32,             # Upgraded from 16 for better learning capacity
+    r=32,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_alpha=32,    # Matched to r
+    lora_alpha=32,
     use_gradient_checkpointing="unsloth",
     random_state=3407,
 )
 
-# 5. Format Preference Dataset for DPO
+#The Orca DPO Pairs dataset is used because there was no suitable cybersecurity dataset with chosen/rejected pairs.
 print("Downloading Alignment Dataset...")
 dataset = load_dataset("Intel/orca_dpo_pairs", split="train[:1500]")
 
@@ -47,13 +52,16 @@ def format_dpo(example):
     }
 dataset = dataset.map(format_dpo)
 
-# 6. DPO Configuration
+#DPO configuration. Beta is set to 0.1 to quickly learn preference as only one epoch is used.
+# Batch size is reduced to one due to DPO overhead. This is compensated by increasing the 
+# number of accumulation steps. The maximum prompt length is 2048 to reduce token count during 
+# head-to-head evaluation.
 dpo_config = DPOConfig(
     output_dir="Step-2-Llama3.2-DPO",
     beta=0.1,
-    per_device_train_batch_size=1,  # Halved from SFT to account for DPO's double memory load
-    gradient_accumulation_steps=32,  # Effective batch size is preserved at 32 (4 * 8 = 32)
-    dataloader_num_workers=0,       # The WSL anti-freeze lock
+    per_device_train_batch_size=1,
+    gradient_accumulation_steps=32,
+    dataloader_num_workers=0,
     learning_rate=5e-6,
     optim="paged_adamw_8bit",
     max_length=max_seq_length,
@@ -62,7 +70,7 @@ dpo_config = DPOConfig(
     num_train_epochs=1,
 )
 
-# 7. Initialize Trainer
+#Initialises DPO trainer without a reference model. In this case, the SFT model is initially used.
 trainer = DPOTrainer(
     model=model,
     ref_model=None,
@@ -71,10 +79,10 @@ trainer = DPOTrainer(
     processing_class=tokenizer,
 )
 
-# 8. Train and Save
-print("Starting Direct Preference Optimization... Watch your VRAM!")
+#Train model and save with 16 bit precision.
+print("Starting Direct Preference Optimization...")
 trainer.train()
 
 # Save the final production model
 model.save_pretrained_merged("Llama-3.2-DPO-Final", tokenizer, save_method="merged_16bit")
-print("Pipeline Complete! You have a production-grade, aligned Cybersecurity LLM.")
+print("DPO Training Complete")

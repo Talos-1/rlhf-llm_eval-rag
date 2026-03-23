@@ -1,3 +1,8 @@
+'''
+This file is responsible for applying Simple Preference Optimisation to the SFT model. This is trained on the Orca DPO Pairs dataset for one epoch
+due to lack of any chosen/rejected dataset pairs related to cybersecurity. The hope is that the model learns to preference the response
+style rather than the content in the dataset.
+'''
 from unsloth import FastLanguageModel
 
 import os
@@ -5,10 +10,11 @@ import torch
 from datasets import load_dataset
 from trl import CPOTrainer, CPOConfig
 
-# 2. Configuration 
-max_seq_length = 4096 # Fully unlocked context window
+#Set max sequence length to be the same as the SFT model. 
+max_seq_length = 4096
 sft_model_path = "Llama-3.2-SFT-Merged"
 
+#Load SFT model with same configuration as it was trained on.
 print(f"Loading Phase 1 SFT Model from {sft_model_path}...")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=sft_model_path,
@@ -17,7 +23,7 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     dtype=torch.bfloat16,
 )
 
-# 3. Inject LoRA Adapters
+#Set LoRA adapter. The rank was determined during SFT training. Any larger and an OOM error occurs.
 model = FastLanguageModel.get_peft_model(
     model,
     r=32,             
@@ -27,10 +33,11 @@ model = FastLanguageModel.get_peft_model(
     random_state=3407,
 )
 
-# 4. Format Preference Dataset 
+#The Orca DPO Pairs dataset is used because there was no suitable cybersecurity dataset with chosen/rejected pairs.
 print("Downloading Alignment Dataset...")
 dataset = load_dataset("Intel/orca_dpo_pairs", split="train[:1500]")
 
+#Format input to SimPO.
 def format_simpo(example):
     return {
         "prompt": f"Instruction: {example['system']}\n{example['question']}\n\nResponse: ",
@@ -39,17 +46,14 @@ def format_simpo(example):
     }
 dataset = dataset.map(format_simpo)
 
-# 5. SimPO Configuration (The VRAM Saver)
+#SimPO config. No regularisation and an equal reward margin is used so as not to preference chosen or rejected outputs.
+# A single epoch with a max prompt length of 2048 is used.
 cpo_config = CPOConfig(
     output_dir="Step-2-Llama3.2-SimPO",
-    
-    # --- The SimPO Magic ---
-    loss_type="simpo",  # Activates the length-normalized algorithm
-    cpo_alpha=0.0,      # Disables CPO's regularizer so it is purely SimPO
-    simpo_gamma=0.5,    # The Reward Margin. Forces chosen to be significantly better than rejected.
+    loss_type="simpo",
+    cpo_alpha=0.0,
+    simpo_gamma=0.5,
     beta=0.1,
-    # -----------------------
-    
     per_device_train_batch_size=1,
     gradient_accumulation_steps=32,
     dataloader_num_workers=0,       
@@ -61,7 +65,7 @@ cpo_config = CPOConfig(
     num_train_epochs=1,
 )
 
-# 6. Initialize Trainer
+#Initialise trainer
 trainer = CPOTrainer(
     model=model,
     args=cpo_config,
@@ -69,10 +73,10 @@ trainer = CPOTrainer(
     processing_class=tokenizer,
 )
 
-# 7. Train and Save
-print("Starting Simple Preference Optimization... Watch it fly!")
+#Train and save model with 16-bit precision.
+print("Starting Simple Preference Optimization...")
 trainer.train()
 
 # Save the final production model
 model.save_pretrained_merged("Llama-3.2-SimPO-Final", tokenizer, save_method="merged_16bit")
-print("Pipeline Complete! You have a concise, aligned Cybersecurity LLM.")
+print("SimPO Training Complete")

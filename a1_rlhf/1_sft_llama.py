@@ -1,13 +1,22 @@
+'''
+This file is responsible for supervised fine-tuning the foundation model (Llama 3.2 3B Instruct 4-bit quantised) on 
+a cybersecurity dataset which has an input an instruction, followed by a text input. The goal of the model is to 
+classify the input using NIST taxonomy of cyber attacks and its reasoning. Due to the model size, LoRA is used
+to reduce the trainable parameters from 3.2B to 48M.
+'''
+
 from unsloth import FastLanguageModel
 
 import torch
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 
-# 1. 24GB VRAM Configuration
+#Sets the maximum sequence length when loading the pretrained model and during supervised fine-tuning. 
+#This is the highest 2^N I could get before an OOM error.
 max_seq_length = 4096
 
-# Using Unsloth's pre-quantized 4-bit model saves massive download and load times
+
+#Loads foundation model with 4-bit quantisation. Saving VRAM during SFT and later on policy optimisation.
 model_name = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
 
 print(f"Loading {model_name}...")
@@ -19,7 +28,8 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     dtype=torch.bfloat16
 )
 
-# 2. Inject LoRA Adapters
+#LoRA adapter configuration with matrix rank of 32 and targetting most relevant layers. Checkpointing 
+#is used in case of failure to quickstart.
 model = FastLanguageModel.get_peft_model(
     model,
     r=32,
@@ -29,15 +39,14 @@ model = FastLanguageModel.get_peft_model(
     random_state=3407,
 )
 
-# 3. Load and Format the Cybersecurity Dataset
+#Cybersecurity dataset is loaded from huggingface and formatted for model input.
 print("Downloading Cybersecurity Dataset...")
 dataset = load_dataset("Vanessasml/cybersecurity_32k_instruction_input_output", split="train")
 
 def format_sft(example):
-    # This dataset uses strictly lowercase keys!
     prompt = example['instruction']
 
-    # Add the input context if it exists and isn't empty
+    #Add input context if it exists and isn't empty
     if example.get('input') and str(example['input']).strip():
         prompt += f"\nContext: {example['input']}"
 
@@ -45,14 +54,15 @@ def format_sft(example):
  
 dataset = dataset.map(format_sft)
 
-# 4. Create the Train/Test Split (90% Train, 10% Eval)
+#Create train/test split (90%-10%)
 dataset = dataset.train_test_split(test_size=0.1, seed=3407)
 train_data = dataset["train"]
 eval_data = dataset["test"]
 
 print(f"Training on {len(train_data)} rows. Evaluating on {len(eval_data)} rows.")
 
-# 5. Initialize the Trainer
+#Configuration for SFT. Foundation model and its tokenizer are passed through along with train-test split from cybersecurity dataset.
+#a batch size of 8 with 4 accumulation steps was the most I could set before OOM error. To save time, evaluation was done per epoch.
 trainer = SFTTrainer(
     model=model,
     tokenizer=tokenizer,
@@ -62,9 +72,9 @@ trainer = SFTTrainer(
     max_seq_length=max_seq_length,
     args=SFTConfig(
         output_dir="Step-1-Llama3.2-SFT",
-        per_device_train_batch_size=8, # Safe for 24GB VRAM
+        per_device_train_batch_size=8,
         gradient_accumulation_steps=4,
-        num_train_epochs=2, # 2 epochs is usually enough for a 3B model
+        num_train_epochs=2,
         learning_rate=2e-4,
         optim="paged_adamw_8bit",
         logging_steps=100,
@@ -72,10 +82,10 @@ trainer = SFTTrainer(
     ),
 )
 
-# 6. Train and Save
+#Finally, training the SFT model.
 print("Starting SFT Training")
 trainer.train()
 
-# Save in 16-bit to preserve the mathematical precision for Phase 2 (DPO)
+#Save the model using 16-bit precision.
 model.save_pretrained_merged("Llama-3.2-SFT-Merged", tokenizer, save_method="merged_16bit")
 print("SFT Training Complete")
