@@ -28,7 +28,7 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     dtype=torch.bfloat16
 )
 
-#LoRA adapter configuration with matrix rank of 32 and targetting most relevant layers. Checkpointing 
+#LoRA adapter configuration with matrix rank of 32 and targeting most relevant layers. Checkpointing 
 #is used in case of failure to quickstart.
 model = FastLanguageModel.get_peft_model(
     model,
