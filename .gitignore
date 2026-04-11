@@ -1,3 +1,4 @@
+# ---------- A1 RLHF ----------
 a1_rlhf/grpo_trainer_lora_model
 a1_rlhf/Llama-3.2-DPO-Final
 a1_rlhf/Llama-3.2-GRPO-Final
@@ -11,4 +12,11 @@ a1_rlhf/Step-2-Llama3.2-DPO
 a1_rlhf/Step-2-Llama3.2-GRPO
 a1_rlhf/Step-2-Llama3.2-SimPO
 a1_rlhf/unsloth_compiled_cache
+
+# ---------- A2 LLM Evaluation ----------
 a2_llm_eval/.env
+
+# ---------- A3 RLHF ----------
+a3_rag/sparse_weights.pkl
+a3_rag/docs/*
+a3_rag/chroma_db/*
