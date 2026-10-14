@@ -1,8 +1,8 @@
-# LLM Alignment, Trustworthiness & RAG
+# LLM Alignment, Trustworthiness, and Retrieval Augmented Generation
 
 | # | Project | Question | Headline result |
 | --- | --- | --- | --- |
-| 1 | RLHF for cyber-threat classification | Do preference-tuning methods (DPO, GRPO, SimPO) improve a small LLM beyond plain fine-tuning? | Fine-tuning increased head-to-head win rate from **12.7% → 31.8%** |
+| 1 | RLHF for cyber-threat classification | Do preference-tuning methods (DPO, GRPO, SimPO) improve a small LLM beyond plain fine-tuning? | Fine-tuning increased head-to-head win rate from **12.7% to 31.8%** |
 | 2 | Trustworthiness of LLMs on autism-related prompts | How do open-weight LLMs treat autistic users across demographics? | One model **leaked a Medicare number**; fairness scores ranged from **0.27 to 0.77** |
 | 3 | Red-team advisor RAG | Can a 4B local model give grounded red-team advice from a curated corpus? | Answer relevancy **0.96**, faithfulness **0.69** across 10 test queries |
 
